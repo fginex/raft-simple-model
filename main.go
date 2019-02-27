@@ -8,11 +8,12 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/hashicorp/raft"
+	"github.com/peerstreaminc/raft"
 )
 
-const numberOfNodes = 3
+const numberOfNodes = 3 // The number of nodes in this simulation. Should be at least 3 to allow leader election.
 
+//--
 func main() {
 
 	allNodes := []*SimpleRaft{}
@@ -42,48 +43,94 @@ func main() {
 		}
 	}
 
-	go func(nodes []*SimpleRaft) {
-		rnData := rand.New(rand.NewSource(time.Now().UnixNano()))
-		time.Sleep(time.Millisecond * 125)
-		rnNode := rand.New(rand.NewSource(time.Now().UnixNano()))
-
-		var leader *SimpleRaft
-
-		for {
-			time.Sleep(time.Second * 5)
-
-			leader = nil
-
-			for _, n := range nodes {
-				if n.ra.State() == raft.Leader {
-					leader = n
-					break
-				}
-			}
-
-			if leader == nil {
-				log.Println("NO LEADER ELECTED")
-				continue
-			}
-
-			log.Printf("LEADER IS %s\n", leader.server.ID)
-
-			// Pick a random node and have it Apply data to the other nodes
-			smsg := fmt.Sprintf("%d\n", rnData.Intn(5000))
-			bmsg := []byte(smsg)
-			nodes[rnNode.Intn(len(nodes)-1)].ra.Apply(bmsg, time.Second*5)
-
-			for _, n := range nodes {
-				n.PrintData()
-			}
-		}
-
-	}(allNodes)
+	go simulationLoop(allNodes)
 
 	//--
 	terminate := make(chan os.Signal, 1)
 	signal.Notify(terminate, os.Interrupt)
 	<-terminate
+}
+
+// simulationLoop simulates activity that might be a use case for leadership consensus
+// and replication.
+func simulationLoop(nodes []*SimpleRaft) {
+
+	rnData := rand.New(rand.NewSource(time.Now().UnixNano()))
+	time.Sleep(time.Millisecond * 125)
+	rnNode := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+	tkStats := time.NewTicker(time.Second * 2)
+	tkSendData := time.NewTicker(time.Second * 3)
+	tkPurgeStore := time.NewTicker(time.Second * 30)
+
+	for {
+		select {
+		case <-tkSendData.C:
+			// Pick a random node and have it Apply data to the other nodes. Notice
+			// how Apply will only be replicated to the other nodes when it is invoked
+			// by the leader node.
+			randomNode := nodes[rnNode.Intn(len(nodes))]
+			if randomNode == nil {
+				continue
+			}
+			smsg := fmt.Sprintf("{%s.%d}\n", randomNode.server.ID, rnData.Intn(5000))
+			bmsg := []byte(smsg)
+
+			log.Printf("%s has new data:%s\n", randomNode.server.ID, smsg)
+			randomNode.ra.Apply(bmsg, time.Second*5)
+
+		case <-tkStats.C:
+			leader := findLeader(nodes)
+			if leader == nil {
+				log.Println("NO LEADER SELECTED")
+			} else {
+				log.Printf("LEADER IS %s\n", leader.server.ID)
+			}
+
+			for _, n := range nodes {
+				n.PrintData()
+			}
+
+		case <-tkPurgeStore.C:
+			// Purge the log stores periodically, we might want to force a snapshot before doing so.
+
+			for _, n := range nodes {
+
+				log.Printf("%s TAKING SNAPSHOT\n", n.server.ID)
+				sf := n.ra.Snapshot()
+				err := sf.Error()
+				if err != nil {
+					log.Printf("%s snapshot failed: %s\n", n.server.ID, err)
+					continue
+				}
+
+				firstndx, err := n.logStore.FirstIndex()
+				if err != nil {
+					log.Printf("Error getting logs first index while printing data: %s\n", err)
+					return
+				}
+				lastndx, err := n.logStore.LastIndex()
+				if err != nil {
+					log.Printf("Error getting logs last index while printing data: %s\n", err)
+					return
+				}
+				n.logStore.DeleteRange(firstndx, lastndx-1)
+				log.Printf("%s LOG STORE PURGED\n", n.server.ID)
+			}
+		}
+	}
+}
+
+func findLeader(nodes []*SimpleRaft) (leader *SimpleRaft) {
+
+	for _, n := range nodes {
+		if n.ra.State() == raft.Leader {
+			leader = n
+			break
+		}
+	}
+
+	return leader
 }
 
 func rpcCommandToString(command interface{}) string {
