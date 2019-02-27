@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/peerstreaminc/raft"
+	"github.com/hashicorp/raft"
 )
 
 // SimpleRaft A simple raft Impl

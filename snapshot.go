@@ -4,7 +4,7 @@ import (
 	"log"
 
 	"github.com/hashicorp/go-msgpack/codec"
-	"github.com/peerstreaminc/raft"
+	"github.com/hashicorp/raft"
 )
 
 // MockSnapshot is a simple snapshot implementation

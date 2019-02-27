@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/peerstreaminc/raft"
+	"github.com/hashicorp/raft"
 )
 
 const numberOfNodes = 3 // The number of nodes in this simulation. Should be at least 3 to allow leader election.
