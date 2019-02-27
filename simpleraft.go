@@ -20,8 +20,7 @@ type SimpleRaft struct {
 
 	// Local data is stored here. The leader will replicate its
 	// data to the other nodes. In this example followers will have additional data
-	// not yet replicated store here. Since they are attempting to apply their local
-	// data the indexes will still be preserved. All the nodes will share the leader's
+	// not yet replicated stored here. All the nodes will share the leader's
 	// data in their logStore.
 	Data sync.Map
 }

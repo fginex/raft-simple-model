@@ -59,24 +59,23 @@ func simulationLoop(nodes []*SimpleRaft) {
 	time.Sleep(time.Millisecond * 125)
 	rnNode := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	tkStats := time.NewTicker(time.Second * 2)
-	tkSendData := time.NewTicker(time.Second * 3)
-	tkPurgeStore := time.NewTicker(time.Second * 30)
+	tkInjectData := time.NewTicker(time.Second * 1)
+	tkStats := time.NewTicker(time.Second * 5)
+	tkPurgeStore := time.NewTicker(time.Hour * 30)
 
 	for {
 		select {
-		case <-tkSendData.C:
-			// Pick a random node and have it Apply data to the other nodes. Notice
-			// how Apply will only be replicated to the other nodes when it is invoked
-			// by the leader node.
+		case <-tkInjectData.C:
+			// Pick a random node and inject data into it. Notice how Apply will only be
+			// replicated to the other nodes when it is invoked by the leader.
 			randomNode := nodes[rnNode.Intn(len(nodes))]
 			if randomNode == nil {
 				continue
 			}
-			smsg := fmt.Sprintf("{%s.%d}\n", randomNode.server.ID, rnData.Intn(5000))
+			smsg := fmt.Sprintf("{%s.%d}", randomNode.server.ID, rnData.Intn(5000))
 			bmsg := []byte(smsg)
 
-			log.Printf("%s has new data:%s\n", randomNode.server.ID, smsg)
+			log.Printf("%s RECEIVED NEW DATA:%s Applying...\n", randomNode.server.ID, smsg)
 			randomNode.ra.Apply(bmsg, time.Second*5)
 
 		case <-tkStats.C:
