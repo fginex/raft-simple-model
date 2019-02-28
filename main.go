@@ -61,13 +61,14 @@ func simulationLoop(nodes []*SimpleRaft) {
 
 	tkInjectData := time.NewTicker(time.Second * 1)
 	tkStats := time.NewTicker(time.Second * 5)
-	tkPurgeStore := time.NewTicker(time.Hour * 30)
+	tkPurge := time.NewTicker(time.Hour * 30)
 
 	for {
 		select {
 		case <-tkInjectData.C:
 			// Pick a random node and inject data into it. Notice how Apply will only be
-			// replicated to the other nodes when it is invoked by the leader.
+			// replicated to the other nodes when it is invoked by the leader. Invoking it
+			// on a non-leader node returns an error.
 			randomNode := nodes[rnNode.Intn(len(nodes))]
 			if randomNode == nil {
 				continue
@@ -76,7 +77,11 @@ func simulationLoop(nodes []*SimpleRaft) {
 			bmsg := []byte(smsg)
 
 			log.Printf("%s RECEIVED NEW DATA:%s Applying...\n", randomNode.server.ID, smsg)
-			randomNode.ra.Apply(bmsg, time.Second*5)
+			ft := randomNode.ra.Apply(bmsg, time.Second*5)
+			err := ft.Error()
+			if err != nil {
+				log.Printf("%s error applying data %s", randomNode.server.ID, err)
+			}
 
 		case <-tkStats.C:
 			leader := findLeader(nodes)
@@ -90,7 +95,7 @@ func simulationLoop(nodes []*SimpleRaft) {
 				n.PrintData()
 			}
 
-		case <-tkPurgeStore.C:
+		case <-tkPurge.C:
 			// Purge the log stores periodically, we might want to force a snapshot before doing so.
 
 			for _, n := range nodes {
