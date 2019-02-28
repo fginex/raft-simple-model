@@ -12,23 +12,25 @@ import (
 
 // SimpleRaft A simple raft Impl
 type SimpleRaft struct {
-	server    raft.Server
-	transport *raft.InmemTransport
-	ra        *raft.Raft
-	logStore  raft.LogStore // Shared - replicated data
-	snapshot  raft.SnapshotStore
+	server        raft.Server
+	transport     *raft.InmemTransport
+	ra            *raft.Raft
+	logStore      raft.LogStore // Shared - replicated data
+	snapshot      raft.SnapshotStore
+	observationCh chan raft.Observation
 
 	// Local data is stored here. The leader will replicate its
 	// data to the other nodes. In this example followers will have additional data
 	// not yet replicated stored here. All the nodes will share the leader's
 	// data in their logStore.
 	Data sync.Map
+
+	wg       sync.WaitGroup
+	shutdown chan struct{}
 }
 
 // NewSimpleInMemRaftNode creates a new simple raft node using the inmem transport.
 func NewSimpleInMemRaftNode(nodeID string) (*SimpleRaft, error) {
-
-	addr, transport := raft.NewInmemTransport(raft.NewInmemAddr())
 
 	config := raft.DefaultConfig()
 	config.LocalID = raft.ServerID(nodeID)
@@ -37,6 +39,11 @@ func NewSimpleInMemRaftNode(nodeID string) (*SimpleRaft, error) {
 	config.HeartbeatTimeout = time.Second * 4
 	config.ElectionTimeout = time.Second * 4 // must be >= heartbeat timeout
 	config.LeaderLeaseTimeout = config.ElectionTimeout / 2
+
+	// We can use raft.NewInmemAddr() to generate a new inmem address however since
+	// its just a unique identifier its easier to just use the more distinguishable
+	// nodeID string (same id we use for the serverid and config localid).
+	addr, transport := raft.NewInmemTransport(raft.ServerAddress(config.LocalID))
 
 	// INMEM SNAPSHOTS & LOGSTORE
 	// Create a in-memory snapshot store. Note using Inmem will avoid having
@@ -70,9 +77,18 @@ func NewSimpleInMemRaftNode(nodeID string) (*SimpleRaft, error) {
 
 	// Instantiate the Raft systems.
 	sr := SimpleRaft{}
+	sr.observationCh = make(chan raft.Observation, 1024)
+	sr.shutdown = make(chan struct{})
+
 	ra, err := raft.NewRaft(config, (*SimpleRaft)(&sr), logStore, logStore, snapshot, transport)
 	if err != nil {
 		log.Printf("new raft: %s\n", err)
+		return nil, err
+	}
+
+	// Register an observer to listen for state changes
+	ra.RegisterObserver(raft.NewObserver(sr.observationCh, false, nil))
+	if err != nil {
 		return nil, err
 	}
 
@@ -83,7 +99,15 @@ func NewSimpleInMemRaftNode(nodeID string) (*SimpleRaft, error) {
 	sr.logStore = logStore
 	sr.snapshot = snapshot
 
+	go sr.observationLoop()
+
 	return &sr, nil
+}
+
+// Shutdown shuts down the raft instance and local go routines
+func (sr *SimpleRaft) Shutdown() {
+	close(sr.shutdown)
+	sr.wg.Wait()
 }
 
 // PrintData prints the stored data.
@@ -164,4 +188,25 @@ func (sr *SimpleRaft) Snapshot() (raft.FSMSnapshot, error) {
 func (sr *SimpleRaft) Restore(io.ReadCloser) error {
 	log.Printf("%s RESTORE\n", sr.server.ID)
 	return nil
+}
+
+func (sr *SimpleRaft) observationLoop() {
+	sr.wg.Add(1)
+	defer sr.wg.Done()
+
+loop:
+	for {
+		select {
+		case <-sr.shutdown:
+			break loop
+
+		case ob := <-sr.observationCh:
+			switch ob.Data.(type) {
+			case raft.LeaderObservation:
+				log.Printf("%s OBSERVED NEW LEADER ELECTED. NEW LEADER IS:%s\n", sr.server.ID, sr.ra.Leader())
+			default:
+				log.Printf("%s OBSERVED: %T (%s)\n", sr.server.ID, ob.Data, ob.Raft.String())
+			}
+		}
+	}
 }
