@@ -197,12 +197,35 @@ loop:
 		case <-sr.shutdown:
 			break loop
 
-		case ob := <-sr.observationCh:
-			switch ob.Data.(type) {
+		case m := <-sr.observationCh:
+			switch data := m.Data.(type) {
+
 			case raft.LeaderObservation:
-				log.Printf("%s OBSERVED NEW LEADER ELECTED. NEW LEADER IS:%s\n", sr.server.ID, sr.ra.Leader())
+				leader := m.Raft.Leader()
+				if leader == "" {
+					log.Printf("%s-> LEADER LOST\n", sr.server.ID)
+				} else {
+					log.Printf("%s-> NEW LEADER IS: %s >>>>>>>>>\n", sr.server.ID, m.Raft.Leader())
+				}
+
+			case raft.RaftState:
+				switch data {
+				case raft.Follower:
+					log.Printf("%s-> FOLLOWER STATE\n", sr.server.ID)
+				case raft.Candidate:
+					log.Printf("%s-> CANDIDATE STATE\n", sr.server.ID)
+				case raft.Leader:
+					log.Printf("%s-> LEADER STATE\n", sr.server.ID)
+				case raft.Shutdown:
+					log.Printf("%s-> SHUTDOWN STATE\n", sr.server.ID)
+				default:
+					log.Printf("%s-> unknown raft state received %d\n", sr.server.ID, data)
+				}
+
+			case raft.RequestVoteRequest:
+
 			default:
-				log.Printf("%s OBSERVED: %T (%s)\n", sr.server.ID, ob.Data, ob.Raft.String())
+				log.Printf("%s-> unexpected raft observation type: %T\n", sr.server.ID, data)
 			}
 		}
 	}
