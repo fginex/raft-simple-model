@@ -88,9 +88,6 @@ func NewSimpleInMemRaftNode(nodeID string) (*SimpleRaft, error) {
 
 	// Register an observer to listen for state changes
 	ra.RegisterObserver(raft.NewObserver(sr.observationCh, false, nil))
-	if err != nil {
-		return nil, err
-	}
 
 	sr.ra = ra
 	sr.server.ID = config.LocalID
